@@ -11,6 +11,7 @@ uploaded = files.upload()
 # الحصول على اسم الملف المرفوع تلقائياً
 uploaded_file_name = list(uploaded.keys())[0]
 print(f"✅ تم رفع الملف بنجاح باسم: {uploaded_file_name}")
+
 # قراءة الصورة وتحويل أنظمة الألوان
 img = cv2.imread(uploaded_file_name)
 img_hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
@@ -22,47 +23,52 @@ upper_green = np.array([85, 255, 255])
 green_mask = cv2.inRange(img_hsv, lower_green, upper_green)
 
 # 2. تحديد نطاق اللون الأصفر (الإجهاد والملوحة) وعزله بدقة واستبعاد التربة
-lower_yellow = np.array([15, 60, 100])
+lower_yellow = np.array([15, 40, 40])
 upper_yellow = np.array([34, 255, 255])
 yellow_mask = cv2.inRange(img_hsv, lower_yellow, upper_yellow)
-# إظهار القناع (القمح السليم أبيض، والمصاب/التربة أسود)
-plt.figure(figsize=(10, 6))
-plt.imshow(green_mask, cmap='gray')
-plt.title("Green Mask: Healthy (White) vs Damaged/Soil (Black)")
+# صناعة مصفوفة العرض المطلوبة (النبات السليم أبيض، والنبات المصاب أسود)
+binary_display = np.zeros_like(green_mask)
+binary_display[green_mask == 255] = 255  # السليم باللون الأبيض
+binary_display[yellow_mask == 255] = 0    # المصاب باللون الأسود
+
+# عرض القناع الثنائي (النباتات فقط بدون التربة)
+plt.figure(figsize=(10, 10))
+plt.imshow(binary_display, cmap='gray')
+plt.title("Vegetation Mask: Healthy (White) vs Damaged Plant (Black)")
 plt.axis('off')
 plt.show()
 
-# الحسابات الرقمية ونسب الملوحة
+# الحسابات الرقمية الدقيقة بناءً على الغطاء النباتي فقط (باستثناء التربة)
 healthy_pixels = cv2.countNonZero(green_mask)
-total_pixels = green_mask.size
-healthy_percentage = (healthy_pixels / total_pixels) * 100
-salinity_stress_percentage = 100 - healthy_percentage
+damaged_pixels = cv2.countNonZero(yellow_mask)
+total_vegetation_pixels = healthy_pixels + damaged_pixels
+
+# حساب النسب المئوية بدقة
+if total_vegetation_pixels > 0:
+    healthy_percentage = (healthy_pixels / total_vegetation_pixels) * 100
+    salinity_stress_percentage = (damaged_pixels / total_vegetation_pixels) * 100
+else:
+    healthy_percentage, salinity_stress_percentage = 0, 0
 
 print("\n" + "="*40)
-print(f"📊 تقرير تحليل حقل القمح:")
+print(f"📊 تقرير تحليل حقل القمح الدقيق (النباتات فقط):")
 print(f"🟩 نسبة القمح السليم: {healthy_percentage:.2f}%")
 print(f"🚨 نسبة الإجهاد الملوحي والضرر: {salinity_stress_percentage:.2f}%")
 print("="*40 + "\n")
-# عكس القناع لتحديد المناطق المصابة والتربة
-damaged_mask = cv2.bitwise_not(green_mask)
-
-# تطبيق اللون الأحمر على المناطق المصابة فوق الصورة الأصلية
+# تطبيق اللون الأحمر على القمح المصاب (الأصفر) فقط، وترك التربة طبيعية
 output_img = img_rgb.copy()
-output_img[damaged_mask == 255] = [255, 0, 0]
+output_img[yellow_mask == 255] = [255, 0, 0] # تلوين الأصفر بالأحمر
 
-# عرض الخريطة التحذيرية النهائية داخل Colab
-plt.figure(figsize=(10, 6))
+# عرض الخريطة التحذيرية الدقيقة داخل Colab
+plt.figure(figsize=(10, 10))
 plt.imshow(output_img)
-plt.title("Final Salinity Map (Damaged Areas in Red)")
+plt.title("Refined Salinity Map (Only Damaged Plants in Red)")
 plt.axis('off')
 plt.show()
 
 # حفظ الصورة النهائية في ملفات الكولاب
 cv2.imwrite('final_salinity_map.jpg', cv2.cvtColor(output_img, cv2.COLOR_RGB2BGR))
-print("💾 تم حفظ الخريطة التحذيرية بنجاح باسم: final_salinity_map.jpg")
-# استدعاء أداة التنزيل من جوجل كولاب
+print("💾 تم حفظ الخريطة التحذيرية الدقيقة بنجاح باسم: final_salinity_map.jpg")
 from google.colab import files
-
-print("⏳ جاري تجهيز وتحميل الخريطة التحذيرية...")
-# تحميل الملف المحفوظ إلى جهازك مباشرة
+print("⏳ جاري تنزيل الخريطة التحذيرية الدقيقة إلى جهازك...")
 files.download('final_salinity_map.jpg')
