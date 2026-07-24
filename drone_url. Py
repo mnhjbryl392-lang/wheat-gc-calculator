@@ -1,0 +1,115 @@
+import cv2
+import numpy as np
+from datetime import datetime  # لإضافة الوقت والتاريخ الفعلي للبث
+
+# 1️⃣ تحديد مصدر البث المباشر (Stream Source)
+# لتشغيله كدرون حقيقي، استبدلي الرقم 0 برابط الطائرة مثل: "rtsp://192.168.1.100:554/stream"
+drone_url = 0
+
+# إنشاء كائن الالتقاط (Capture Object) واستدعاء دالة قراءة البث
+cap = cv2.VideoCapture(drone_url)
+
+# فحص برمجي للتأكد من أن الكاميرا والبث يعمل ولا يوجد خطأ
+if not cap.isOpened():
+    print("❌️ خطأ: لا يمكن فتح البث المباشر ❌️")
+    exit()
+else:
+    print("✅ تم الاتصال بالبث المباشر. للخروج اضغط على زر q في نافذة الفيديو")
+
+# 💾 إعدادات حفظ الفيديو 
+filename = "drone_field_analysis.mp4"
+fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # كود الترميز القياسي لملفات MP4
+fps = 20.0                                 # عدد الفريمات المسجلة في الثانية
+frame_size = (800, 600)                    # حجم الـ resize الثابت
+out = cv2.VideoWriter(filename, fourcc, fps, frame_size)
+
+# حلقة التكرار المستمر (The Real-Time loop) فريماً بفرام
+while cap.isOpened():
+    ret, frame = cap.read()
+    if not ret:
+        print("⚠️ تنبيه: انقطع تدفق البيانات من البث المباشر")
+        break
+
+    # تقليل حجم الفريم لتسريع المعالجة البرمجية
+    frame = cv2.resize(frame, frame_size)
+
+    # تحويل الفريم الحالي من BGR إلى نظام الـ HSV لحماية وتصفية الألوان
+    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    
+    # 2️⃣ تحديد مصفوفات الألوان (قواعد البيانات الرقمية لعزل الألوان):
+    # أ) التربة المعزولة (تعتمد على قيد التشبع S تحت 50 لأنها باهتة دائماً)
+    lower_soil = np.array([0, 0, 10])
+    upper_soil = np.array([180, 50, 180])
+    
+    # ب) النبات المجهد بسبب الملوحة (الأصفر/البني) - يبدأ التشبع S من 51 لمنع التداخل مع التربة
+    lower_stressed = np.array([5, 51, 50])
+    upper_stressed = np.array([34, 255, 255])
+    
+    # ج) النبات السليم (الأخضر المثالي) - يبدأ التشبع S من 51 أيضاً لضمان دقة العزل
+    lower_healthy = np.array([35, 51, 40])
+    upper_healthy = np.array([85, 255, 255])
+    
+    # 3️⃣ إنشاء الأقنعة (Masks) لفصل وتصفية الألوان
+    mask_soil = cv2.inRange(hsv, lower_soil, upper_soil)
+    mask_stressed = cv2.inRange(hsv, lower_stressed, upper_stressed)
+    mask_healthy = cv2.inRange(hsv, lower_healthy, upper_healthy)
+    
+    # 🔥 خطوة الأمان: استبعاد بكسلات التربة تماماً من أقنعة النباتات لمنع التداخل
+    mask_stressed = cv2.bitwise_and(mask_stressed, cv2.bitwise_not(mask_soil))
+    mask_healthy = cv2.bitwise_and(mask_healthy, cv2.bitwise_not(mask_soil))
+    
+    # 4️⃣ الحساب الرقمي للمساحات بدقة البكسل
+    total_pixels = frame_size[0] * frame_size[1]
+    
+    soil_pixels = cv2.countNonZero(mask_soil)
+    stressed_pixels = cv2.countNonZero(mask_stressed)
+    healthy_pixels = cv2.countNonZero(mask_healthy)
+    
+    # حساب النسب المئوية في الوقت الفعلي
+    soil_pct = (soil_pixels / total_pixels) * 100
+    damage_pct = (stressed_pixels / total_pixels) * 100
+    healthy_pct = (healthy_pixels / total_pixels) * 100
+    
+    # 5️⃣ التعديل البصري: تظليل المناطق المصابة باللون الأحمر (ميزة البث المطلوبة)
+    display_frame = frame.copy()
+    
+    # إنشاء طبقة حمراء كاملة بنفس حجم الصورة
+    red_overlay = np.zeros_like(display_frame)
+    red_overlay[:] = [0, 0, 255]  # اللون الأحمر في نظام BGR
+    
+    # دمج الطبقة الحمراء فوق المناطق المجهدة فقط بنسبة شفافية (مثلاً 40% أحمر و 60% الصورة الأصلية)
+    stressed_area = cv2.bitwise_and(red_overlay, red_overlay, mask=mask_stressed)
+    cv2.addWeighted(stressed_area, 0.4, display_frame, 1.0, 0, display_frame)
+
+    # 6️⃣ جلب التوثيق الزمني والجغرافي الحي (Timestamp & Geolocation)
+    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    mock_gps = "Lat: 26.5567° N, Lon: 31.6918° E"  # إحداثيات افتراضية لمدينة سوهاج الجديدة كمحاكاة للدرون
+    
+    # 7️⃣ طباعة البيانات والنسب المئوية الحية مباشرة على شاشة العرض (الـ Live Stream)
+    # طباعة الخلفية السوداء تحت النصوص لزيادة وضوح القراءة (الاحترافية البصرية)
+    cv2.rectangle(display_frame, (5, 5), (380, 210), (0, 0, 0), -1)
+    
+    cv2.putText(display_frame, f"INFO: {current_time}", (15, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+    cv2.putText(display_frame, f"GPS: {mock_gps}", (15, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+    cv2.putText(display_frame, "---------------------------------", (15, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (150, 150, 150), 1)
+    
+    cv2.putText(display_frame, f"Stressed (Red Mask): {damage_pct:.1f}%", (15, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+    cv2.putText(display_frame, f"Isolated Soil: {soil_pct:.1f}%", (15, 140), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (20, 100, 150), 2)
+    cv2.putText(display_frame, f"Healthy Plants: {healthy_pct:.1f}%", (15, 170), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+    
+    # 💾 حفظ الفريم الحالي (المعدل والمظلل بالأحمر والمكتوب عليه البيانات) داخل ملف الفيديو
+    out.write(display_frame)
+    
+    # عرض فيديو البث المباشر النهائي في نافذة النظام للمستخدم
+    cv2.imshow("Drone Real-Time Analysis System", display_frame)
+
+    # انتظر 1 ميلي ثانية وافحص إذا ضغط المستخدم على مفتاح 'q' لإغلاق البرنامج
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        print("⏹️ تم إيقاف البث والتسجيل بواسطة المستخدم.")
+        break
+
+# تحرير كائنات الالتقاط والحفظ وإغلاق جميع النوافذ المفتوحة بشكل آمن
+cap.release()
+out.release()  
+cv2.destroyAllWindows()
+print("🎉 تم حفظ ملف الفيديو بنجاح في مجلد المشروع وإغلاق البرنامج.")
